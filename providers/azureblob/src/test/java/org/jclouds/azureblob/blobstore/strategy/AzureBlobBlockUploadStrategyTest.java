@@ -30,8 +30,10 @@ import org.jclouds.io.Payload;
 import org.jclouds.io.PayloadSlicer;
 import org.jclouds.io.Payloads;
 import org.jclouds.io.payloads.BaseMutableContentMetadata;
+import org.jclouds.io.payloads.ByteSourcePayload;
 import org.testng.annotations.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.easymock.EasyMock.anyObject;
@@ -39,7 +41,6 @@ import static org.easymock.EasyMock.createMock;
 import static org.easymock.EasyMock.createNiceMock;
 import static org.easymock.EasyMock.eq;
 import static org.easymock.EasyMock.expect;
-import static org.easymock.EasyMock.expectLastCall;
 import static org.easymock.EasyMock.replay;
 import static org.easymock.EasyMock.verify;
 import static org.testng.Assert.assertEquals;
@@ -50,26 +51,32 @@ public class AzureBlobBlockUploadStrategyTest {
    public void testExecute() throws Exception {
       String container = "test-container";
       String blobName = "test-blob";
-      long oneMB = 1048576L;
+      byte[] blobData = "ABCD".getBytes(Charsets.UTF_8);
       AzureBlobClient client = createMock(AzureBlobClient.class);
       PayloadSlicer slicer = createMock(PayloadSlicer.class);
       MutableBlobMetadata metadata = new MutableBlobMetadataImpl();
       MutableContentMetadata contentMetadata = new BaseMutableContentMetadata();
-      contentMetadata.setContentLength(MultipartUploadStrategy.MAX_BLOCK_SIZE * 3 + oneMB);
+      contentMetadata.setContentLength((long)blobData.length);
       metadata.setName(blobName);
       metadata.setContentMetadata(contentMetadata);
       Blob blob = new BlobImpl(metadata);
-      ByteSource bytes = ByteSource.wrap("ABCD".getBytes(Charsets.UTF_8));
+      ByteSource bytes = ByteSource.wrap(blobData);
       Payload payload = Payloads.newByteSourcePayload(bytes);
       payload.setContentMetadata(contentMetadata);
       blob.setPayload(payload);
 
-      expect(slicer.slice(payload, 0, MultipartUploadStrategy.MAX_BLOCK_SIZE)).andReturn(payload);
-      expect(slicer.slice(payload, MultipartUploadStrategy.MAX_BLOCK_SIZE, MultipartUploadStrategy.MAX_BLOCK_SIZE)).andReturn(payload);
-      expect(slicer.slice(payload, MultipartUploadStrategy.MAX_BLOCK_SIZE * 2, MultipartUploadStrategy.MAX_BLOCK_SIZE)).andReturn(payload);
-      expect(slicer.slice(payload, MultipartUploadStrategy.MAX_BLOCK_SIZE * 3, oneMB)).andReturn(payload);
-      client.putBlock(eq(container), eq(blobName), anyObject(String.class), eq(payload));
-      expectLastCall().times(4);
+      List<Payload> payloads = new ArrayList<Payload>();
+      payloads.add(createBlockPayload(new byte[]{blobData[0]}));
+      payloads.add(createBlockPayload(new byte[]{blobData[1]}));
+      payloads.add(createBlockPayload(new byte[]{blobData[2]}));
+      payloads.add(createBlockPayload(new byte[]{blobData[3]}));
+
+
+      expect(slicer.slice(payload, MultipartUploadStrategy.MAX_BLOCK_SIZE)).andReturn(payloads);
+      client.putBlock(eq(container), eq(blobName), anyObject(String.class), eq(payloads.get(0)));
+      client.putBlock(eq(container), eq(blobName), anyObject(String.class), eq(payloads.get(1)));
+      client.putBlock(eq(container), eq(blobName), anyObject(String.class), eq(payloads.get(2)));
+      client.putBlock(eq(container), eq(blobName), anyObject(String.class), eq(payloads.get(3)));
       expect(client.putBlockList(eq(container), eq(blobName), EasyMock.<List<String>>anyObject())).andReturn("Fake ETAG");
 
       AzureBlobBlockUploadStrategy strat = new AzureBlobBlockUploadStrategy(client, slicer);
@@ -101,5 +108,13 @@ public class AzureBlobBlockUploadStrategyTest {
 
       AzureBlobBlockUploadStrategy strat = new AzureBlobBlockUploadStrategy(client, slicer);
       strat.execute(container, blob);
+   }
+
+   private Payload createBlockPayload(byte[] blockData) {
+      ByteSourcePayload payload = Payloads.newByteSourcePayload(ByteSource.wrap(blockData));
+      MutableContentMetadata contentMetadata = new BaseMutableContentMetadata();
+      contentMetadata.setContentLength((long) blockData.length);
+      payload.setContentMetadata(contentMetadata);
+      return payload;
    }
 }
